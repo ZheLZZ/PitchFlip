@@ -1,0 +1,9 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/PitchFlip.Core/PitchFlip.Core.csproj" />
+    <Project Path="src/PitchFlip/PitchFlip.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/PitchFlip.Tests/PitchFlip.Tests.csproj" />
+  </Folder>
+</Solution>

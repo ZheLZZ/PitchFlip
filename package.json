@@ -1,0 +1,12 @@
+{
+  "name": "pitchflip",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": { "test:switch": "node scripts/test_pdf_switch.cjs" },
+  "dependencies": {
+    "pdfjs-dist": "6.3.289"
+  },
+  "devDependencies": {
+    "playwright": "1.63.0"
+  }
+}

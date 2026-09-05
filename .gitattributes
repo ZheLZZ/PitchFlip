@@ -1,0 +1,12 @@
+* text=auto
+*.pdf binary
+*.png binary
+*.ico binary
+*.wasm binary
+*.bcmap binary
+*.pfb binary
+*.ttf binary
+*.icc binary
+src/PitchFlip/Web/pdfjs/** -text -whitespace
+licenses/** -text -whitespace
+*.cmd text eol=crlf

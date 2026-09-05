@@ -1,0 +1,25 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <ProjectReference Include="..\PitchFlip.Core\PitchFlip.Core.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.4191.47" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <UseWPF>true</UseWPF>
+    <ApplicationIcon>Assets\PitchFlip.ico</ApplicationIcon>
+    <Version>0.1.0</Version>
+    <Product>PitchFlip</Product>
+    <Description>Landscape PDF duplex binding preview for Windows.</Description>
+  </PropertyGroup>
+
+  <ItemGroup><Content Include="Web\**\*" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" /></ItemGroup>
+  <ItemGroup><Resource Include="Assets\PitchFlip.ico" /></ItemGroup>
+</Project>
