@@ -176,6 +176,24 @@ const server = http.createServer((req,res)=>{
       const box=await page.locator('#'+id).boundingBox();assert.ok(box.x>=0&&box.x+box.width<=960&&box.y+box.height<=560,id+' must stay in the viewport: '+JSON.stringify(box));
     }
     await page.screenshot({path:path.join(root,'artifacts/interface-compact.png')});
+    if(process.env.PITCHFLIP_UPDATE_SCREENSHOTS==='1'){
+      await page.setViewportSize({width:1400,height:800});
+      await load(13,10);await load(14,6);await page.locator('#animation').uncheck();
+      await page.locator('#next').click();await visibleSelection(1);
+      await page.waitForFunction(()=>document.querySelector('#upper canvas')?.width>0&&document.querySelector('#lower canvas')?.width>0);
+      await page.waitForTimeout(400);
+      await page.screenshot({path:path.join(root,'docs/images/binding-preview.png')});
+      const inserted=message(14,6);inserted.pages.splice(4,0,{id:'readme-blank',type:1,geometry});inserted.selected=5;inserted.dirty=true;inserted.canUndo=true;
+      await page.evaluate(data=>window.__deliver(data),inserted);
+      await visibleSelection(5);
+      await page.waitForFunction(()=>document.querySelector('#upper canvas')?.width>0&&document.querySelector('#counts').textContent.includes('7 个输出页'));
+      await page.waitForTimeout(400);
+      await page.screenshot({path:path.join(root,'docs/images/insert-blank.png')});
+      await page.locator('#overviewToggle').click();
+      await page.locator('#overviewSize').fill('220');
+      await page.waitForFunction(()=>document.querySelectorAll('#overviewGrid canvas').length===6);
+      await page.screenshot({path:path.join(root,'docs/images/page-overview.png')});
+    }
     console.log('PASS: PDF switching/recovery; sidebar follows button, arrow and drag navigation; insertion targets selection; input arrows do not flip.');
   } finally {await browser.close();server.close();}
 })().catch(e=>{console.error(e);server.close();process.exitCode=1;});
