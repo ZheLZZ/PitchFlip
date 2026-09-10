@@ -1,5 +1,14 @@
 # MVP 验证记录
 
+## 参考图界面更新（2026-09-10）
+
+- `dotnet test -c Release`：15 项测试通过。
+- `npm run test:switch`：PDF 切换、失败恢复、200 页定位、翻页、拖动、插空白目标、独占一张纸及页面总览回归通过。
+- 新增检查通过：顶部打开／保存消息、右侧插入操作、原始页禁止删除、缩放后适合窗口恢复，以及 960×560 浏览区域的主要控件边界。
+- 六页样本的左侧导航分组断言通过：封面、2–3 页、4–5 页、封底；2–3 页分别标注上页和下页。
+- 已查看 1400×800 和 960×560 浏览区域截图；使用仓库合成 PDF，截图位于本地 artifacts/interface-redesign.png 和 artifacts/interface-compact.png。
+- win-x64 自包含版本已重新构建至 dist/PitchFlip。此次浏览器测试使用真实 PDF.js，原生消息桥为测试替身；未重新手动验证系统文件对话框和实际打印机。
+
 ## 任务栏图标尺寸修复（2026-09-05）
 
 原 Window.Icon 使用 BitmapImage，只解码 ICO 的首个 16px 帧，WPF 将其居中放入 64px 大图标，主体仅占约 16px。改用 ImageSource 类型转换器保留 BitmapFrame 的 ICO 多帧信息，按系统 DPI 选择对应尺寸。

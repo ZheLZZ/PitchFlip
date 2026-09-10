@@ -49,6 +49,8 @@ const server = http.createServer((req,res)=>{
       assert.match(await page.locator('#filename').textContent(),new RegExp(`${n}pages`));
     }
     await load(1,6);
+    assert.deepEqual(await page.locator('.sheet-group').evaluateAll(groups=>groups.map(g=>Array.from(g.querySelectorAll('.slot'),s=>Number(s.dataset.index)))),[[0],[1,2],[3,4],[5]]);
+    assert.deepEqual(await page.locator('.sheet-group[data-spread="1"] .slot>span').allTextContents(),['上页 2','下页 3']);
     try { await load(2,10); } catch(e) {
       throw new Error('Second PDF failed: '+JSON.stringify(await page.evaluate(()=>window.__messages.filter(m=>m.action==='error'))),{cause:e});
     }
@@ -149,6 +151,31 @@ const server = http.createServer((req,res)=>{
     await page.waitForFunction(()=>document.querySelector('#lower canvas')?.width>0);
     assert.equal(await page.locator('#overview').isVisible(),false);
     assert.deepEqual(await page.evaluate(()=>window.__messages.filter(m=>m.action==='error')),[]);
+    // Verify the redesigned toolbar bridge, duplicate action controls and zoom.
+    await page.locator('#openToolbar').click();
+    assert.equal(await page.evaluate(()=>window.__messages.at(-1).action),'open');
+    await page.locator('#saveToolbar').click();
+    assert.equal(await page.evaluate(()=>window.__messages.at(-1).action),'save');
+    await page.locator('[data-command="before"]').click();
+    assert.deepEqual(await page.evaluate(()=>window.__messages.at(-1)),{action:'insert',index:0});
+    assert.equal(await page.locator('#delete').isDisabled(),true);
+    const fitWidth=await page.locator('#book').evaluate(e=>e.clientWidth);
+    await page.locator('#zoomIn').click();
+    await page.waitForFunction(w=>document.getElementById('book').clientWidth>w,fitWidth);
+    await page.locator('#fitWindow').click();
+    assert.equal(await page.locator('#book').evaluate(e=>e.clientWidth),fitWidth);
+    await page.locator('#next').click();await visibleSelection(1);
+    await page.setViewportSize({width:1400,height:800});
+    await page.waitForTimeout(350);
+    await page.screenshot({path:path.join(root,'artifacts/interface-redesign.png')});
+    await page.setViewportSize({width:960,height:560});
+    await page.waitForTimeout(350);
+    await page.screenshot({path:path.join(root,'artifacts/interface-compact.png')});
+    assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);
+    for(const id of ['saveToolbar','delete','fitWindow','next']){
+      const box=await page.locator('#'+id).boundingBox();assert.ok(box.x>=0&&box.x+box.width<=960&&box.y+box.height<=560,id+' must stay in the viewport: '+JSON.stringify(box));
+    }
+    await page.screenshot({path:path.join(root,'artifacts/interface-compact.png')});
     console.log('PASS: PDF switching/recovery; sidebar follows button, arrow and drag navigation; insertion targets selection; input arrows do not flip.');
   } finally {await browser.close();server.close();}
 })().catch(e=>{console.error(e);server.close();process.exitCode=1;});
