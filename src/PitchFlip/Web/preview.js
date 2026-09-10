@@ -3,7 +3,9 @@ pdfjs.GlobalWorkerOptions.workerSrc='./pdfjs/pdf.worker.mjs';
 const $=id=>document.getElementById(id);
 let state=null,pdf=null,loadingTask=null,loading=false,rev=-1,selected=0,spread=0,epoch=0,animating=false,drag=null;
 let cache=new Map(),thumbCache=new Map(),observer=null,thumbQueue=Promise.resolve();
-let revealedSlot=null,overviewMode=false,overviewObserver=null;
+let revealedSlot=null,overviewMode=false,overviewObserver=null,zoom=1;
+const icons={page:'M14 3H5v18h14V8z M14 3v5h5 M16 15h6 M19 12v6',book:'M12 5C8 2 5 3 2 4v15c3-1 6-2 10 1 4-3 7-2 10-1V4c-3-1-6-2-10 1z M12 5v15 M6 4v14 M18 4v14',undo:'M9 5 3 11l6 6 M3 11h12a6 6 0 0 1 0 12',redo:'M15 5l6 6-6 6 M21 11H9a6 6 0 0 0 0 12',folder:'M3 8V4h6l3 3h9v3 M2 10h20l-3 11H2z',save:'M4 3h14l3 3v15H3V3z M7 3v7h10V3 M7 21v-8h10v8',shield:'M12 2 3 6v6c0 5 9 10 9 10s9-5 9-10V6z M8 11l3 3 5-6',trash:'M3 6h18 M8 6V3h8v3 M5 6l1 15h12l1-15 M10 10v7 M14 10v7',left:'m15 4-8 8 8 8',right:'m9 4 8 8-8 8',minus:'M10 17a7 7 0 1 1 0-14 7 7 0 0 1 0 14 M15 15l6 6 M6 10h8',plus:'M10 17a7 7 0 1 1 0-14 7 7 0 0 1 0 14 M15 15l6 6 M6 10h8 M10 6v8',fit:'M8 3H3v5 M16 3h5v5 M3 16v5h5 M21 16v5h-5 M8 8l8 8 M16 8l-8 8'};
+document.querySelectorAll('[data-icon]').forEach(el=>{const svg=document.createElementNS('http://www.w3.org/2000/svg','svg'),path=document.createElementNS(svg.namespaceURI,'path');svg.setAttribute('viewBox','0 0 24 24');svg.setAttribute('aria-hidden','true');path.setAttribute('d',icons[el.dataset.icon]);svg.append(path);el.prepend(svg);});
 const send=(action,index=selected)=>window.chrome?.webview?.postMessage({action,index});
 const error=e=>window.chrome?.webview?.postMessage({action:'error',message:String(e.message||e)});
 const count=()=>Math.ceil(state.pages.length/2);
@@ -33,8 +35,8 @@ function fit(){
  if(!state)return;
  const p=slot(spread*2)||slot(spread*2-1);const g=p.geometry;
  let w=g.cropX2-g.cropX1 || g.width,h=g.cropY2-g.cropY1 || g.height;if(g.rotation%180)[w,h]=[h,w];
- const maxW=$('workspace').clientWidth-64,maxH=$('workspace').clientHeight-132;
- const width=Math.max(100,Math.min(maxW,maxH*w/h/2));
+ const maxW=$('workspace').clientWidth-150,maxH=$('workspace').clientHeight-168;
+ const width=Math.max(100,Math.min(maxW,maxH*w/h/2))*zoom;
  $('book').style.width=width+'px';$('book').style.height=(width*h/w*2)+'px';
 }
 function revealSelection(){
@@ -42,27 +44,33 @@ function revealSelection(){
  const item=document.querySelector('.slot.selected');
  if(!item||item===revealedSlot)return;
  revealedSlot=item;
+ item.closest('.sheet-group')?.classList.remove('collapsed');
  const pane=$('sidebar'),viewport=pane.getBoundingClientRect(),bounds=item.getBoundingClientRect();
  // Leave the adjacent insert controls visible; scroll only the list, without
  // stealing keyboard focus from the preview or the flip buttons.
- if(bounds.top<viewport.top+28||bounds.bottom>viewport.bottom-28){
-  pane.scrollTo({top:pane.scrollTop+bounds.top-viewport.top-(pane.clientHeight-bounds.height)/2,behavior:'instant'});
+ if(bounds.top<viewport.top+95||bounds.bottom>viewport.bottom-28){
+  pane.scrollTo({top:pane.scrollTop+bounds.top-viewport.top-95-(pane.clientHeight-95-bounds.height)/2,behavior:'instant'});
  }
 }
 function info(){
  const p=slot(selected);if(!p)return;
  $('filename').textContent=state.name+(state.dirty?' · 未导出':'');
- const values=[['原 PDF',p.type===0?p.originalPageNumber+' / '+state.pages.filter(p=>p.type===0).length:'—'],['输出 PDF',p.type===2?'不写入输出':(selected+1)+' / '+state.pages.length],['物理纸张','第 '+(Math.floor(selected/2)+1)+' 张'],['当前面',selected%2?'背面':'正面'],['页面类型',typeText(p)],['页面尺寸',p.geometry.width.toFixed(1)+' × '+p.geometry.height.toFixed(1)+' pt']];
+ const g=p.geometry;let w=g.cropX2-g.cropX1||g.width,h=g.cropY2-g.cropY1||g.height;if(g.rotation%180)[w,h]=[h,w];
+ const mm=v=>Math.round(v*25.4/72),landscape=w>=h,a4=Math.abs(Math.max(w,h)*25.4/72-297)<2&&Math.abs(Math.min(w,h)*25.4/72-210)<2;
+ const values=[['输出页码',p.type===2?'不写入输出':selected+1],['原始页码',p.type===0?p.originalPageNumber:'—'],['所在纸张','第 '+(Math.floor(selected/2)+1)+' 张（共 '+count()+' 张）'],['正 / 反面',(selected%2?'背面':'正面')+(selected===spread*2-1?'（上页）':'（下页）')],['页面尺寸',mm(w)+' × '+mm(h)+' mm'+(a4?'（A4）':'')],['页面方向',landscape?'横向（Landscape）':'纵向（Portrait）'],['是否插入页',p.type===0?'否（原始页面）':p.type===1?'是（插入空白）':'物理补位 · 仅预览']];
  const dl=document.createElement('dl');for(const [k,v]of values){const dt=document.createElement('dt'),dd=document.createElement('dd');dt.textContent=k;dd.textContent=v;if(k==='当前面')dd.className='emphasis';dl.append(dt,dd);}$('details').replaceChildren(dl);
  $('standalone').disabled=p.type!==0;$('delete').disabled=p.type!==1;$('before').disabled=p.type===2;$('after').disabled=p.type===2;
  $('undo').disabled=!state.canUndo;$('redo').disabled=!state.canRedo;
+ document.querySelectorAll('[data-command]').forEach(b=>b.disabled=$(b.dataset.command).disabled);
  document.querySelectorAll('.slot,.overview-page').forEach(e=>e.classList.toggle('selected',Number(e.dataset.index)===selected));
  revealSelection();
  $('upper').classList.toggle('selected',selected===spread*2-1);$('lower').classList.toggle('selected',selected===spread*2);
 }
 async function show(){
  if(!state||!pdf||loading)return;if(overviewMode){info();return;}const generation=rev;fit();epoch++;
- $('topLabel').textContent=label(spread*2-1);$('bottomLabel').textContent=label(spread*2);
+ $('topLabel').textContent=slot(spread*2-1)?'上页（翻过后的背面） · 输出 '+(spread*2):'';$('bottomLabel').textContent=slot(spread*2)?'下页（当前正面） · 输出 '+(spread*2+1):'';
+ $('topLabel').title=label(spread*2-1);$('bottomLabel').title=label(spread*2);
+ if(slot(spread*2-1)?.type===2)$('topLabel').textContent='上页（物理补位空白 · 不导出）';
  $('position').textContent=spread===0?'封面':spread===count()?'封底':'已翻 '+spread+' / '+count()+' 张';
  $('prev').disabled=spread===0;$('next').disabled=spread===count();
  info();const width=Math.ceil($('book').clientWidth*devicePixelRatio);
@@ -79,16 +87,17 @@ function rebuildList(){
  observer=new IntersectionObserver(entries=>{for(const en of entries){if(!en.isIntersecting)continue;observer.unobserve(en.target);const element=en.target,n=Number(element.dataset.original);
  thumbQueue=thumbQueue.then(async()=>{if(ticket!==rev||loading||!element.isConnected)return;const c=await renderOriginal(n,260,true);if(ticket!==rev||!element.isConnected)return;const copy=document.createElement('canvas');copy.width=c.width;copy.height=c.height;copy.getContext('2d').drawImage(c,0,0);element.replaceChildren(copy);}).catch(e=>{if(ticket===rev)error(e);});
  }},{root:$('sidebar'),rootMargin:'200px'});
- const fragment=document.createDocumentFragment();
+ const fragment=document.createDocumentFragment();let group;
  for(let i=0;i<count()*2;i++){
-  if(i%2===0){const h=document.createElement('div');h.className='sheet-title';h.textContent='第 '+(i/2+1)+' 张纸';fragment.append(h);}
-  const gap=document.createElement('button');gap.className='gap';gap.textContent='＋ 插入空白';gap.onclick=()=>{if(!animating)send('insert',Math.min(i,state.pages.length));};fragment.append(gap);
+  if(i===0||i%2===1){group=document.createElement('div');group.className='sheet-group';const view=Math.ceil(i/2);group.dataset.spread=view;const h=document.createElement('button');h.className='sheet-title';h.textContent=view===0?'封面':view===count()?'封底':'第 '+(i+1)+'–'+(i+2)+' 页';h.setAttribute('aria-expanded','true');const owner=group;h.onclick=()=>{owner.classList.toggle('collapsed');h.setAttribute('aria-expanded',String(!owner.classList.contains('collapsed')));};group.append(h);fragment.append(group);}
+  if(i>0&&i%2===0){const binding=document.createElement('div');binding.className='navigation-binding';binding.textContent='顶部装订';group.append(binding);}
+  const gap=document.createElement('button');gap.className='gap';gap.textContent='＋ 插入空白';gap.onclick=()=>{if(!animating)send('insert',Math.min(i,state.pages.length));};group.append(gap);
   const p=slot(i),b=document.createElement('button');b.className='slot '+(p.type===1?'blank':p.type===2?'virtual':'');b.dataset.index=i;
   const thumb=document.createElement('div');thumb.className='thumb';thumb.textContent=p.type===0?'正在加载…':typeText(p);
   if(p.type===0){thumb.dataset.original=p.originalPageNumber;observer.observe(thumb);}
-  const title=document.createElement('span');title.textContent=(i%2?'背面':'正面')+' · '+(p.type===2?'补位':'输出 '+(i+1));
+  const title=document.createElement('span');title.textContent=(i%2?'上页':'下页')+' '+(p.type===2?'补位':i+1);b.title=title.textContent+' · '+label(i);b.setAttribute('aria-label',b.title);
   const sub=document.createElement('small');sub.textContent=p.type===0?'原 PDF 第 '+p.originalPageNumber+' 页':p.type===1?'用户插入 · 将写入 PDF':'仅预览 · 不导出';
-  b.append(thumb,title,sub);b.onclick=()=>select(i);b.oncontextmenu=e=>{e.preventDefault();select(i);context(e,i);};fragment.append(b);
+  b.append(thumb,title,sub);b.onclick=()=>select(i);b.oncontextmenu=e=>{e.preventDefault();select(i);context(e,i);};group.append(b);
  }
  const end=document.createElement('button');end.className='gap';end.textContent='＋ 末尾插入空白';end.onclick=()=>send('insert',state.pages.length);fragment.append(end);$('list').append(fragment);
 }
@@ -133,9 +142,10 @@ function setOverview(enabled){
  $('overview').hidden=!enabled;$('overviewToggle').textContent=enabled?'返回翻页':'页面总览';
  $('overviewToggle').setAttribute('aria-pressed',String(enabled));$('context').hidden=true;
  if(enabled){rebuildOverview();$('overviewScroll').focus();}
- else{revealedSlot=null;overviewObserver?.disconnect();$('overviewGrid').replaceChildren();show().catch(error);$('overviewToggle').focus();}
+ else{revealedSlot=null;overviewObserver?.disconnect();$('overviewGrid').replaceChildren();show().catch(error);$('overviewToggle').focus({preventScroll:true});}
 }
 $('overviewToggle').onclick=()=>setOverview(!overviewMode);
+$('physicalTab').onclick=()=>setOverview(false);$('overviewBack').onclick=()=>setOverview(false);
 $('overviewSize').oninput=()=>{$('overviewGrid').style.setProperty('--tile-size',$('overviewSize').value+'px');};
 async function prepare(direction){
  if(overviewMode||loading||animating||!state||!pdf||direction>0&&spread>=count()||direction<0&&spread<=0)return false;
@@ -159,6 +169,14 @@ async function settle(direction,complete,from){
 async function flip(d){if(await prepare(d))await settle(d,true,d>0?0:180);}
 function action(a){if(!state||loading||animating)return; if(a==='before'&&slot(selected)?.type!==2)send('insert',selected);else if(a==='after'&&slot(selected)?.type!==2)send('insert',selected+1);else if(a==='standalone'&&slot(selected)?.type===0)send(a);else if(['delete','undo','redo'].includes(a))send(a);}
 for(const a of ['before','after','standalone','delete','undo','redo'])$(a).onclick=()=>action(a);
+document.querySelectorAll('[data-command]').forEach(b=>b.onclick=()=>action(b.dataset.command));
+$('openToolbar').onclick=()=>send('open');$('saveToolbar').onclick=()=>send('save');
+function setZoom(value){if(!state||loading||animating)return;zoom=Math.max(.75,Math.min(2,value));$('zoomLevel').value=String(zoom);$('zoomOut').disabled=zoom<=.75;$('zoomIn').disabled=zoom>=2;show().catch(error);}
+$('zoomLevel').onchange=()=>setZoom(Number($('zoomLevel').value));
+const zoomSteps=[.75,1,1.25,1.5,2];
+$('zoomOut').onclick=()=>setZoom(zoomSteps[Math.max(0,zoomSteps.indexOf(zoom)-1)]);
+$('zoomIn').onclick=()=>setZoom(zoomSteps[Math.min(zoomSteps.length-1,zoomSteps.indexOf(zoom)+1)]);
+$('fitWindow').onclick=()=>{setZoom(1);$('bookArea').scrollTo(0,0);};
 $('prev').onclick=()=>flip(-1).catch(error);$('next').onclick=()=>flip(1).catch(error);$('open').onclick=()=>send('open');
 function context(e,i){const menu=$('context');menu.querySelector('[data-action="standalone"]').disabled=slot(i).type!==0;menu.hidden=false;menu.style.left=Math.min(e.clientX,innerWidth-220)+'px';menu.style.top=Math.min(e.clientY,innerHeight-180)+'px';menu.querySelector('[data-action="delete"]').disabled=slot(i).type!==1;for(const a of ['before','after'])menu.querySelector('[data-action="'+a+'"]').disabled=slot(i).type===2;}
 document.querySelectorAll('#context button').forEach(b=>b.onclick=()=>{action(b.dataset.action);$('context').hidden=true;});document.addEventListener('click',()=>$('context').hidden=true);
@@ -208,7 +226,9 @@ async function receive(data){
    pdf=await loadingTask.promise;
   } finally {loading=false;}
  }
- $('empty').hidden=true;$('bookArea').hidden=false;$('counts').textContent=count()+' 张纸 · '+state.pages.length+' 个输出页';
+ $('empty').hidden=true;$('bookArea').hidden=false;$('counts').textContent=(count()+1)+' 组视图 · '+state.pages.length+' 个输出页';
+ for(const id of ['saveToolbar','zoomLevel','fitWindow'])$(id).disabled=false;
+ $('zoomOut').disabled=zoom<=.75;$('zoomIn').disabled=zoom>=2;
  $('overviewToggle').disabled=false;rebuildList();rebuildOverview();await show();
 }
 let receiveQueue=Promise.resolve();
