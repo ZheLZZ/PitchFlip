@@ -7,6 +7,43 @@ public class MappingTests
 {
     private static readonly PageGeometry G = new(0,0,960,540,0,0,960,540,0);
     private static DocumentState Create(int n=6) => new(Enumerable.Repeat(G,n));
+    [Theory]
+    [InlineData(0, 1)]
+    [InlineData(1, 2)]
+    [InlineData(4, 1)]
+    [InlineData(5, 2)]
+    public void StandaloneKeepsOriginalOnFrontAndUndoesAsOneOperation(int index, int added)
+    {
+        var s=Create(); s.Selected=index; var original=s.Pages.ToArray(); var target=s.Pages[index];
+        Assert.True(s.MakeStandalone(index));
+        Assert.Equal(6+added,s.Pages.Count);
+        Assert.Equal(target,s.Pages[s.Selected]); Assert.Equal(0,s.Selected%2);
+        Assert.Equal(PageSlotType.InsertedBlank,s.Pages[s.Selected+1].Type);
+        Assert.Equal(original,s.Pages.Where(p=>p.Type==PageSlotType.Original));
+        var arranged=s.Pages.ToArray();
+        Assert.False(s.MakeStandalone(s.Selected)); Assert.Equal(arranged,s.Pages);
+        s.Undo(); Assert.Equal(original,s.Pages); Assert.Equal(index,s.Selected); Assert.False(s.CanUndo);
+        s.Redo(); Assert.Equal(arranged,s.Pages);
+    }
+    [Fact] public void StandaloneReusesBlankAndCopiesTargetGeometry()
+    {
+        var other=G with {X2=800,Rotation=90}; var s=new DocumentState(new[]{G,other,G});
+        s.InsertBlank(2); var blank=s.Pages[2];
+        Assert.True(s.MakeStandalone(1)); Assert.Equal(5,s.Pages.Count);
+        Assert.Equal(other,s.Pages[1].Geometry); Assert.Equal(blank,s.Pages[3]);
+        Assert.False(s.MakeStandalone(1)); Assert.False(s.MakeStandalone(s.Pages.Count));
+        var odd=Create(3); Assert.True(odd.MakeStandalone(2));
+        Assert.Equal(4,odd.Pages.Count); Assert.Equal(PageSlotType.InsertedBlank,odd.Sheets[1].Back.Slot.Type);
+    }
+    [Fact] public void StandaloneExportsRealBlankPages()
+    {
+        using var service=new PdfService(Path.Combine(Root,"samples/PitchFlip-6pages.pdf"));
+        service.State.MakeStandalone(1);
+        var output=Path.Combine(Root,"artifacts/standalone-export.pdf");Directory.CreateDirectory(Path.GetDirectoryName(output)!);service.Export(output);
+        using var pdf=PdfReader.Open(output,PdfDocumentOpenMode.Import);
+        Assert.Equal(8,pdf.PageCount); Assert.Empty(pdf.Pages[1].Contents.Elements); Assert.Empty(pdf.Pages[3].Contents.Elements);
+        Assert.NotEmpty(pdf.Pages[2].Contents.Elements);
+    }
     [Fact] public void MappingPairsOriginals()
     {
         var s=Create(); Assert.Equal(3,s.Sheets.Count);

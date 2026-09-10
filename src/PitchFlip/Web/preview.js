@@ -3,7 +3,7 @@ pdfjs.GlobalWorkerOptions.workerSrc='./pdfjs/pdf.worker.mjs';
 const $=id=>document.getElementById(id);
 let state=null,pdf=null,loadingTask=null,loading=false,rev=-1,selected=0,spread=0,epoch=0,animating=false,drag=null;
 let cache=new Map(),thumbCache=new Map(),observer=null,thumbQueue=Promise.resolve();
-let revealedSlot=null;
+let revealedSlot=null,overviewMode=false,overviewObserver=null;
 const send=(action,index=selected)=>window.chrome?.webview?.postMessage({action,index});
 const error=e=>window.chrome?.webview?.postMessage({action:'error',message:String(e.message||e)});
 const count=()=>Math.ceil(state.pages.length/2);
@@ -38,6 +38,7 @@ function fit(){
  $('book').style.width=width+'px';$('book').style.height=(width*h/w*2)+'px';
 }
 function revealSelection(){
+ if(overviewMode)return;
  const item=document.querySelector('.slot.selected');
  if(!item||item===revealedSlot)return;
  revealedSlot=item;
@@ -53,14 +54,14 @@ function info(){
  $('filename').textContent=state.name+(state.dirty?' · 未导出':'');
  const values=[['原 PDF',p.type===0?p.originalPageNumber+' / '+state.pages.filter(p=>p.type===0).length:'—'],['输出 PDF',p.type===2?'不写入输出':(selected+1)+' / '+state.pages.length],['物理纸张','第 '+(Math.floor(selected/2)+1)+' 张'],['当前面',selected%2?'背面':'正面'],['页面类型',typeText(p)],['页面尺寸',p.geometry.width.toFixed(1)+' × '+p.geometry.height.toFixed(1)+' pt']];
  const dl=document.createElement('dl');for(const [k,v]of values){const dt=document.createElement('dt'),dd=document.createElement('dd');dt.textContent=k;dd.textContent=v;if(k==='当前面')dd.className='emphasis';dl.append(dt,dd);}$('details').replaceChildren(dl);
- $('delete').disabled=p.type!==1;$('before').disabled=p.type===2;$('after').disabled=p.type===2;
+ $('standalone').disabled=p.type!==0;$('delete').disabled=p.type!==1;$('before').disabled=p.type===2;$('after').disabled=p.type===2;
  $('undo').disabled=!state.canUndo;$('redo').disabled=!state.canRedo;
- document.querySelectorAll('.slot').forEach(e=>e.classList.toggle('selected',Number(e.dataset.index)===selected));
+ document.querySelectorAll('.slot,.overview-page').forEach(e=>e.classList.toggle('selected',Number(e.dataset.index)===selected));
  revealSelection();
  $('upper').classList.toggle('selected',selected===spread*2-1);$('lower').classList.toggle('selected',selected===spread*2);
 }
 async function show(){
- if(!state||!pdf||loading)return;const generation=rev;fit();epoch++;
+ if(!state||!pdf||loading)return;if(overviewMode){info();return;}const generation=rev;fit();epoch++;
  $('topLabel').textContent=label(spread*2-1);$('bottomLabel').textContent=label(spread*2);
  $('position').textContent=spread===0?'封面':spread===count()?'封底':'已翻 '+spread+' / '+count()+' 张';
  $('prev').disabled=spread===0;$('next').disabled=spread===count();
@@ -91,8 +92,53 @@ function rebuildList(){
  }
  const end=document.createElement('button');end.className='gap';end.textContent='＋ 末尾插入空白';end.onclick=()=>send('insert',state.pages.length);fragment.append(end);$('list').append(fragment);
 }
+function rebuildOverview(){
+ overviewObserver?.disconnect();$('overviewGrid').replaceChildren();
+ if(!overviewMode||!pdf||loading)return;
+ const ticket=rev;
+ $('overviewCount').textContent=state.pages.length+' 个输出页 · '+count()+' 张纸';
+ overviewObserver=new IntersectionObserver(entries=>{for(const en of entries){
+  if(!en.isIntersecting)continue;overviewObserver.unobserve(en.target);
+  const element=en.target,n=Number(element.dataset.original);
+  thumbQueue=thumbQueue.then(async()=>{
+   if(ticket!==rev||loading||!element.isConnected)return;
+   const c=await renderOriginal(n,520,true);
+   if(ticket!==rev||!element.isConnected)return;
+   const copy=document.createElement('canvas');copy.width=c.width;copy.height=c.height;
+   copy.getContext('2d').drawImage(c,0,0);element.replaceChildren(copy);
+  }).catch(e=>{if(ticket===rev)error(e);});
+ }},{root:$('overviewScroll'),rootMargin:'300px'});
+ const fragment=document.createDocumentFragment();
+ for(let view=0;view<=count();view++){
+  const card=document.createElement('div');card.className='overview-card';card.dataset.spread=view;
+  const heading=document.createElement('strong');heading.textContent=view===0?'封面':view===count()?'封底':'翻开第 '+view+' 张纸';card.append(heading);
+  for(const [position,i] of [['上',view*2-1],['下',view*2]]){
+   if(position==='下'){const binding=document.createElement('div');binding.className='overview-binding';binding.textContent='顶部装订';card.append(binding);}
+   const p=slot(i),b=document.createElement(p?'button':'div');b.className='overview-page '+(!p?'absent':p.type===1?'blank':p.type===2?'virtual':'')+(i===selected?' selected':'');
+   const thumb=document.createElement('div');thumb.className='thumb';
+   if(!p){thumb.textContent='';b.append(thumb);const caption=document.createElement('small');caption.textContent='此处无页面';b.append(caption);card.append(b);continue;}
+   b.dataset.index=i;thumb.textContent=p.type===0?'正在加载…':typeText(p);
+   if(p.type===0){thumb.dataset.original=p.originalPageNumber;overviewObserver.observe(thumb);}
+   const title=document.createElement('small');title.textContent=(p.type===2?'补位空白':'输出 '+(i+1))+' · '+(i%2?'背面':'正面')+(p.type===0?' · 原页 '+p.originalPageNumber:p.type===2?' · 不导出':' · 插入空白');
+   b.append(thumb,title);b.onclick=()=>{select(i);setOverview(false);};
+   b.oncontextmenu=e=>{e.preventDefault();select(i);context(e,i);};card.append(b);
+  }
+  fragment.append(card);
+ }
+ $('overviewGrid').append(fragment);
+}
+function setOverview(enabled){
+ if(!state||loading||animating)return;
+ overviewMode=enabled;document.body.classList.toggle('overview-mode',enabled);
+ $('overview').hidden=!enabled;$('overviewToggle').textContent=enabled?'返回翻页':'页面总览';
+ $('overviewToggle').setAttribute('aria-pressed',String(enabled));$('context').hidden=true;
+ if(enabled){rebuildOverview();$('overviewScroll').focus();}
+ else{revealedSlot=null;overviewObserver?.disconnect();$('overviewGrid').replaceChildren();show().catch(error);$('overviewToggle').focus();}
+}
+$('overviewToggle').onclick=()=>setOverview(!overviewMode);
+$('overviewSize').oninput=()=>{$('overviewGrid').style.setProperty('--tile-size',$('overviewSize').value+'px');};
 async function prepare(direction){
- if(loading||animating||!state||!pdf||direction>0&&spread>=count()||direction<0&&spread<=0)return false;
+ if(overviewMode||loading||animating||!state||!pdf||direction>0&&spread>=count()||direction<0&&spread<=0)return false;
  const generation=rev;
  animating=true;epoch++;const base=direction>0?spread*2:(spread-1)*2;const w=Math.ceil($('book').clientWidth*devicePixelRatio);
  try{await Promise.all([paint($('front'),base,w),paint($('back'),base+1,w)]);
@@ -107,14 +153,14 @@ async function settle(direction,complete,from){
  const end=complete?(direction>0?180:0):(direction>0?0:180);
  if($('animation').checked){const a=$('flipper').animate([{transform:'rotateX('+from+'deg)'},{transform:'rotateX('+end+'deg)'}],{duration:Math.max(100,Math.abs(end-from)*2.5),easing:'cubic-bezier(.2,.7,.25,1)',fill:'forwards'});try{await a.finished;}catch(e){if(generation!==rev)return;throw e;}a.cancel();}
  if(generation!==rev)return;
- if(complete){spread+=direction;selected=Math.min(spread*2,state.pages.length-1);if(spread===count())selected=count()*2-1;send('select',selected);}
+ if(complete){spread+=direction;selected=Math.max(0,spread*2-1);send('select',selected);}
  $('flipper').style.display='none';animating=false;await show();
 }
 async function flip(d){if(await prepare(d))await settle(d,true,d>0?0:180);}
-function action(a){if(!state||loading||animating)return; if(a==='before'&&slot(selected)?.type!==2)send('insert',selected);else if(a==='after'&&slot(selected)?.type!==2)send('insert',selected+1);else if(['delete','undo','redo'].includes(a))send(a);}
-for(const a of ['before','after','delete','undo','redo'])$(a).onclick=()=>action(a);
+function action(a){if(!state||loading||animating)return; if(a==='before'&&slot(selected)?.type!==2)send('insert',selected);else if(a==='after'&&slot(selected)?.type!==2)send('insert',selected+1);else if(a==='standalone'&&slot(selected)?.type===0)send(a);else if(['delete','undo','redo'].includes(a))send(a);}
+for(const a of ['before','after','standalone','delete','undo','redo'])$(a).onclick=()=>action(a);
 $('prev').onclick=()=>flip(-1).catch(error);$('next').onclick=()=>flip(1).catch(error);$('open').onclick=()=>send('open');
-function context(e,i){const menu=$('context');menu.hidden=false;menu.style.left=Math.min(e.clientX,innerWidth-220)+'px';menu.style.top=Math.min(e.clientY,innerHeight-130)+'px';menu.querySelector('[data-action="delete"]').disabled=slot(i).type!==1;for(const a of ['before','after'])menu.querySelector('[data-action="'+a+'"]').disabled=slot(i).type===2;}
+function context(e,i){const menu=$('context');menu.querySelector('[data-action="standalone"]').disabled=slot(i).type!==0;menu.hidden=false;menu.style.left=Math.min(e.clientX,innerWidth-220)+'px';menu.style.top=Math.min(e.clientY,innerHeight-180)+'px';menu.querySelector('[data-action="delete"]').disabled=slot(i).type!==1;for(const a of ['before','after'])menu.querySelector('[data-action="'+a+'"]').disabled=slot(i).type===2;}
 document.querySelectorAll('#context button').forEach(b=>b.onclick=()=>{action(b.dataset.action);$('context').hidden=true;});document.addEventListener('click',()=>$('context').hidden=true);
 function jumpDialog(){if(!state)return;$('jumpError').textContent='';$('jumpDialog').showModal();$('jumpNumber').focus();}
 $('jump').onclick=jumpDialog;$('jumpCancel').onclick=()=>$('jumpDialog').close();
@@ -122,6 +168,14 @@ $('jumpGo').onclick=()=>{const n=Number($('jumpNumber').value),type=$('jumpType'
 document.addEventListener('keydown',e=>{
  if(e.target.matches('input,select,textarea')||e.target.isContentEditable||$('jumpDialog').open)return;
  const k=e.key.toLowerCase();let handled=true;
+ if(overviewMode&&!e.ctrlKey&&!e.altKey&&!e.metaKey){
+  if(k==='escape'){setOverview(false);e.preventDefault();return;}
+  if(['arrowdown','arrowup','pagedown','pageup',' '].includes(k)){
+   const pane=$('overviewScroll'),distance=k.startsWith('arrow')?90:pane.clientHeight*.85;
+   pane.scrollBy({top:(k==='arrowup'||k==='pageup'?-1:1)*distance});e.preventDefault();return;
+  }
+ }
+
  if(e.ctrlKey&&k==='o')send('open');else if(e.ctrlKey&&k==='s')send('save');else if(e.ctrlKey&&k==='g')jumpDialog();else if(e.ctrlKey&&k==='z')action('undo');else if(e.ctrlKey&&k==='y')action('redo');else if(!e.ctrlKey&&k==='b')action(e.shiftKey?'after':'before');else if(k==='delete')action('delete');else if(!e.ctrlKey&&!e.altKey&&!e.metaKey&&(k==='pagedown'||k==='arrowdown'||k===' '))flip(1).catch(error);else if(!e.ctrlKey&&!e.altKey&&!e.metaKey&&(k==='pageup'||k==='arrowup'))flip(-1).catch(error);else handled=false;
  if(handled)e.preventDefault();
 });
@@ -142,7 +196,7 @@ async function receive(data){
  const changed=rev!==data.revision||!pdf;state=data;selected=data.selected;spread=selected%2?(selected+1)/2:selected/2;
  if(changed){
   rev=data.revision;epoch++;loading=true;pdf=null;
-  cache=new Map();thumbCache=new Map();observer?.disconnect();thumbQueue=Promise.resolve();
+  overviewObserver?.disconnect();$('overviewGrid').replaceChildren();$('overviewScroll').scrollTop=0;cache=new Map();thumbCache=new Map();observer?.disconnect();thumbQueue=Promise.resolve();
   drag=null;animating=false;
   $('flipper').getAnimations().forEach(a=>a.cancel());$('flipper').style.display='none';
   $('context').hidden=true;if($('jumpDialog').open)$('jumpDialog').close();
@@ -155,11 +209,11 @@ async function receive(data){
   } finally {loading=false;}
  }
  $('empty').hidden=true;$('bookArea').hidden=false;$('counts').textContent=count()+' 张纸 · '+state.pages.length+' 个输出页';
- rebuildList();await show();
+ $('overviewToggle').disabled=false;rebuildList();rebuildOverview();await show();
 }
 let receiveQueue=Promise.resolve();
 window.chrome?.webview?.addEventListener('message',e=>{receiveQueue=receiveQueue.then(()=>receive(e.data)).catch(error);});
-for(const id of ['before','after','delete','undo','redo','prev','next','jump'])$(id).disabled=true;
+for(const id of ['before','after','standalone','delete','undo','redo','prev','next','jump'])$(id).disabled=true;
 $('jump').disabled=false;
 send('ready');
 document.addEventListener('dragover',e=>{e.preventDefault();e.dataTransfer.dropEffect='copy';});

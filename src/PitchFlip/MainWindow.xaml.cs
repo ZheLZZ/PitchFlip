@@ -69,6 +69,7 @@ public partial class MainWindow : Window
         if(action=="select") { s.Selected=Math.Clamp(index,0,s.Pages.Count); return; }
         if(action=="save") { await Save(); return; }
         switch(action) {
+            case "standalone": Status.Text=s.MakeStandalone(index) ? "已设为独占一张纸；空白页已补齐，可一次撤销。" : "当前页面无需调整。"; break;
             case "insert": Status.Text=s.InsertBlank(Math.Clamp(index,0,s.Pages.Count)) ?? "已插入空白页；后续正反面已更新。"; break;
             case "delete": s.DeleteBlank(index); break;
             case "undo": s.Undo(); break;
