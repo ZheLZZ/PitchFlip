@@ -45,6 +45,22 @@ public sealed class DocumentState
         pages.Insert(index, new(Guid.NewGuid(), PageSlotType.InsertedBlank, null, geometry)); Selected = index;
         return mixed ? "相邻页面尺寸不同，空白页已沿用前一页尺寸。" : null;
     }
+    public bool MakeStandalone(int index)
+    {
+        if (index < 0 || index >= pages.Count || pages[index].Type != PageSlotType.Original) return false;
+        var page = pages[index];
+        var needsBefore = index % 2 == 1;
+        var needsAfter = index + 1 >= pages.Count || pages[index + 1].Type != PageSlotType.InsertedBlank;
+        if (!needsBefore && !needsAfter) return false;
+        undo.Push(Capture()); redo.Clear();
+        if (needsBefore) {
+            pages.Insert(index, new(Guid.NewGuid(), PageSlotType.InsertedBlank, null, page.Geometry));
+            index++;
+        }
+        if (needsAfter) pages.Insert(index + 1, new(Guid.NewGuid(), PageSlotType.InsertedBlank, null, page.Geometry));
+        Selected = index;
+        return true;
+    }
     public bool DeleteBlank(int index)
     {
         if (index < 0 || index >= pages.Count || pages[index].Type != PageSlotType.InsertedBlank) return false;
