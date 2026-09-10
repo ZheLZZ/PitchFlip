@@ -15,7 +15,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <UseWPF>true</UseWPF>
     <ApplicationIcon>Assets\PitchFlip.ico</ApplicationIcon>
-    <Version>0.1.0</Version>
+    <Version>0.2.0</Version>
     <Product>PitchFlip</Product>
     <Description>Landscape PDF duplex binding preview for Windows.</Description>
   </PropertyGroup>
